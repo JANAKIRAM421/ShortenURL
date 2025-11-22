@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TinyLink - URL Shortener & Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tooltip {
+      position: relative;
+      cursor: pointer;
+    }
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: max-content;
+      background-color: #333;
+      color: #fff;
+      text-align: center;
+      border-radius: 0.375rem;
+      padding: 2px 8px;
+      position: absolute;
+      z-index: 30;
+      bottom: 130%; left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      transition: opacity 0.2s, visibility 0.2s;
+      font-size: 0.85em;
+      pointer-events: none;
+    }
+    .tooltip:hover .tooltiptext,
+    .tooltip:focus .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+    .row-animate {
+      animation: fadeInRow 0.5s;
+    }
+    @keyframes fadeInRow {
+      from { opacity: 0; transform: translateY(16px);}
+      to { opacity: 1; transform: none;}
+    }
+    @media (max-width: 900px) {
+      .w-custom { width: 100vw !important; max-width: 98vw !important;}
+      .max-w-5xl { max-width: 100vw !important;}
+    }
+    @media (max-width: 640px) {
+      body, input, button, table {
+        font-size: 1em;
+      }
+      h1 { font-size: 2em; }
+      .p-10 { padding: 1rem; }
+      .max-w-5xl { max-width: 99vw;}
+      .w-custom { width: 100vw;}
+    }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center" style="background: linear-gradient(120deg, #8A2387 0%, #E94057 60%, #F27121 100%);">
+  <div class="bg-white shadow-2xl rounded-2xl p-10" style="width:90vw;max-width:1200px;border-width:2px;border-color:#ec4899;">
+    <h1 class="text-4xl sm:text-5xl font-extrabold text-pink-700 mb-6 text-center drop-shadow-xl font-sans tracking-wider">TinyLink</h1>
+    <form id="shorten-form">
+      <input 
+        type="text" 
+        id="url" 
+        placeholder="Enter your long URL..." 
+        class="w-full p-3 border-2 border-orange-300 rounded-lg focus:outline-none focus:border-pink-500 mb-2"
+      />
+      <input 
+        type="text" 
+        id="code"
+        placeholder="Custom code (optional)" 
+        class="w-full p-3 border-2 border-amber-400 rounded-lg mb-4"
+      />
+      <button 
+        type="submit" 
+        class="bg-gradient-to-r from-pink-500 via-orange-400 to-yellow-400 text-white py-2 px-6 rounded-lg font-bold shadow-lg transition-all duration-300 w-full tracking-wide hover:scale-105"
+        id="shortenBtn"
+      >
+        Shorten URL
+      </button>
+      <div id="error" class="text-red-500 mt-2 text-center"></div>
+      <div id="success" class="text-green-500 mt-2 text-center font-medium"></div>
+    </form>
+    <div class="flex flex-col sm:flex-row gap-2 mt-6 mb-2">
+      <input type="text" id="filterCode" placeholder="Filter by code..." class="p-2 border-2 border-pink-300 rounded w-full sm:w-1/2" />
+      <input type="text" id="filterURL" placeholder="Filter by URL..." class="p-2 border-2 border-orange-300 rounded w-full sm:w-1/2" />
+    </div>
+    <div id="dashboard" class="overflow-x-auto"></div>
+  </div>
+
+  <!-- Spinner -->
+  <div id="spinner" class="fixed inset-0 bg-gray-900 bg-opacity-40 flex items-center justify-center hidden z-10">
+    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-pink-500"></div>
+  </div>
+  <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center hidden z-20">
+    <div class="bg-white rounded-lg shadow-xl p-6 animate-fadeIn">
+      <p class="text-lg mb-4 text-pink-700 font-semibold">Are you sure you want to delete this link?</p>
+      <button id="modalConfirm" class="bg-pink-500 text-white px-4 py-2 rounded mr-2 font-semibold hover:bg-orange-400 transition-all duration-300">Delete</button>
+      <button id="modalCancel" class="bg-yellow-400 px-4 py-2 rounded font-semibold border border-pink-500">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    let sortField = '';
+    let sortAsc = true;
+    let pendingDeleteCode = null;
+
+    function showSpinner() { document.getElementById('spinner').classList.remove('hidden'); }
+    function hideSpinner() { document.getElementById('spinner').classList.add('hidden'); }
+
+    function codeBadge(code) {
+      if (!code) return '';
+      if (/^[a-f0-9]{6,8}$/.test(code)) {
+        return `<span class="ml-2 text-xs px-2 py-1 rounded bg-yellow-200 text-yellow-700 font-semibold">Auto</span>`;
+      } else {
+        return `<span class="ml-2 text-xs px-2 py-1 rounded bg-orange-200 text-orange-800 font-semibold">Custom</span>`;
+      }
+    }
+
+    async function refreshDashboardSorted() {
+      showSpinner();
+      const res = await fetch('/api/links');
+      let links = await res.json();
+      const codeValue = document.getElementById('filterCode').value.toLowerCase();
+      const urlValue = document.getElementById('filterURL').value.toLowerCase();
+      links = links.filter(link =>
+        link.code.toLowerCase().includes(codeValue) &&
+        link.url.toLowerCase().includes(urlValue)
+      );
+      if (sortField) {
+        links.sort((a, b) => {
+          let va = a[sortField] || '';
+          let vb = b[sortField] || '';
+          if (sortField === 'lastClicked') {
+            va = new Date(va || 0);
+            vb = new Date(vb || 0);
+          }
+          if (va < vb) return sortAsc ? -1 : 1;
+          if (va > vb) return sortAsc ? 1 : -1;
+          return 0;
+        });
+      }
+      let html = `
+        <table class="w-full mt-2 text-sm">
+          <tr class="bg-gradient-to-r from-pink-200 via-orange-100 to-yellow-100 font-semibold">
+            <td>
+              <button type="button" onclick="sortTable('code')" class="underline text-pink-700">Code</button>
+            </td>
+            <td>
+              <button type="button" onclick="sortTable('url')" class="underline text-pink-700">URL</button>
+            </td>
+            <td>
+              <button type="button" onclick="sortTable('clicks')" class="underline text-pink-700">Clicks</button>
+            </td>
+            <td>
+              <button type="button" onclick="sortTable('lastClicked')" class="underline text-pink-700">Last Clicked</button>
+            </td>
+            <td class="text-right">Actions</td>
+          </tr>
+          ${links.map(link => `
+            <tr class="hover:bg-gradient-to-r from-yellow-100 to-orange-100 transition row-animate">
+              <td class="whitespace-nowrap">
+                <div class="flex items-center gap-2">
+                  <span>
+                    <a href="/${link.code}" target="_blank" class="text-pink-600 underline font-bold hover:text-orange-500 transition tooltip">
+                      ${link.code}
+                      <span class="tooltiptext">Short link: ${window.location.origin}/${link.code}</span>
+                    </a>
+                    ${codeBadge(link.code)}
+                  </span>
+                  <span class="tooltip">
+                    <button type="button" onclick="copyLink('${link.code}')" class="text-xs px-2 py-1 rounded bg-pink-500 text-white hover:bg-orange-400 font-semibold transition-all duration-200">Copy</button>
+                    <span class="tooltiptext">Copy short link</span>
+                  </span>
+                </div>
+              </td>
+              <td class="break-all">
+                <span class="block text-orange-700">${link.url}</span>
+              </td>
+              <td class="font-bold text-yellow-500 text-center">${link.clicks}</td>
+              <td class="text-center">${link.lastClicked ? new Date(link.lastClicked).toLocaleString() : '-'}</td>
+              <td class="whitespace-nowrap">
+                <div class="flex items-center gap-2 justify-end">
+                  <span class="tooltip">
+                    <button type="button" onclick="deleteLink('${link.code}')" class="bg-pink-500 text-white px-3 py-1 rounded font-semibold shadow-sm hover:bg-orange-400 transition-all duration-200">Delete</button>
+                    <span class="tooltiptext">Delete this short link</span>
+                  </span>
+                  <span class="tooltip">
+                    <a href="/code/${link.code}" class="text-orange-500 underline font-bold">Stats</a>
+                    <span class="tooltiptext">View stats page</span>
+                  </span>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </table>
+      `;
+      document.getElementById('dashboard').innerHTML = html;
+      hideSpinner();
+    }
+
+    function sortTable(field) {
+      sortAsc = (sortField === field) ? !sortAsc : true;
+      sortField = field;
+      refreshDashboardSorted();
+    }
+
+    document.getElementById('filterCode').addEventListener('input', refreshDashboardSorted);
+    document.getElementById('filterURL').addEventListener('input', refreshDashboardSorted);
+
+    function copyLink(code) {
+      const shortUrl = `${window.location.origin}/${code}`;
+      navigator.clipboard.writeText(shortUrl);
+      document.getElementById('success').textContent = "Copied to clipboard: " + shortUrl;
+      setTimeout(() => {
+        document.getElementById('success').textContent = "";
+      }, 2000);
+    }
+
+    function deleteLink(code) {
+      pendingDeleteCode = code;
+      document.getElementById('modal').classList.remove('hidden');
+      document.querySelector('#modal').classList.add('animate-fadeIn');
+    }
+    document.getElementById('modalConfirm').onclick = async function() {
+      showSpinner();
+      await fetch(`/api/links/${pendingDeleteCode}`, { method: 'DELETE' });
+      document.getElementById('modal').classList.add('hidden');
+      pendingDeleteCode = null;
+      hideSpinner();
+      refreshDashboardSorted();
+    };
+    document.getElementById('modalCancel').onclick = function() {
+      document.getElementById('modal').classList.add('hidden');
+      pendingDeleteCode = null;
+    };
+
+    document.getElementById('shorten-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      document.getElementById('error').textContent = "";
+      document.getElementById('success').textContent = "";
+      const url = document.getElementById('url').value;
+      const code = document.getElementById('code').value;
+      const btn = document.getElementById('shortenBtn');
+      btn.classList.add('scale-105');
+      setTimeout(() => btn.classList.remove('scale-105'), 400);
+      if (!url) {
+        document.getElementById('error').textContent = "Please enter a URL";
+        return;
+      }
+      showSpinner();
+      const res = await fetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, code })
+      });
+      hideSpinner();
+      if (res.status === 409) {
+        document.getElementById('error').textContent = "Custom code is already taken!";
+        return;
+      }
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('success').textContent = "Short URL: " + window.location.origin + "/" + data.code;
+        refreshDashboardSorted();
+      } else {
+        document.getElementById('error').textContent = data.message || "Failed to shorten URL";
+      }
+    } 
+    );
+
+    refreshDashboardSorted();
+  </script>
+</body>
+</html>
