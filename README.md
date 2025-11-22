@@ -103,15 +103,6 @@ See `.env.example` in repo.
 
 ---
 
-## 💡 Walkthrough Summary
-
-- Demo all actions: create, click, delete, stats, error.
-- Dashboard features, table sorting/filtering/copy, modal.
-- Discuss backend, routes, API, healthz.
-- Show assignment coverage.
-
----
-
 ## 👤 Author 
 
 Created by Ram for the TinyLink assignment.  
